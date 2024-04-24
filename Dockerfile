@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:7.0 as build
+FROM mcr.microsoft.com/dotnet/sdk:8.0 as build
 
 # Copy source code
 COPY ["OF DL.sln", "/src/OF DL.sln"]
@@ -10,7 +10,7 @@ WORKDIR "/src"
 RUN dotnet publish -c Release -o out
 
 
-FROM mcr.microsoft.com/dotnet/runtime:7.0-jammy
+FROM mcr.microsoft.com/dotnet/runtime:8.0-jammy
 
 # Install dependencies
 RUN apt-get update

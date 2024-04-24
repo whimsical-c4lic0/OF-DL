@@ -1,3 +1,4 @@
+using Avalonia;
 using Newtonsoft.Json;
 using OF_DL.Entities;
 using OF_DL.Entities.Archived;
@@ -38,156 +39,30 @@ public class Program
         m_DownloadHelper = new DownloadHelper();
     }
 
-	public async static Task Main()
-	{
-		try
+    [STAThread]
+    public static async Task Main(string[] args)
+    {
+        if (args.Length == 0)
         {
-            Log.Logger = new LoggerConfiguration()
-                .MinimumLevel.Debug()
-                .WriteTo.File("logs/OFDL.txt", rollingInterval: RollingInterval.Day)
-                .CreateLogger();
-
-
-            AnsiConsole.Write(new FigletText("Welcome to OF-DL").Color(Color.Red));
-
-            if (File.Exists("auth.json"))
-            {
-                AnsiConsole.Markup("[green]auth.json located successfully!\n[/]");
-                Auth = JsonConvert.DeserializeObject<Auth>(File.ReadAllText("auth.json"));
-            }
-            else
-            {
-                AnsiConsole.Markup("[red]auth.json does not exist, please make sure it exists in the folder where you are running the program from[/]");
-                Log.Error("auth.json does not exist");
-                Console.ReadKey();
-                Environment.Exit(0);
-            }
-
-            if (File.Exists("config.json"))
-            {
-                AnsiConsole.Markup("[green]config.json located successfully!\n[/]");
-                Config = JsonConvert.DeserializeObject<Config>(File.ReadAllText("config.json"));
-            }
-            else
-            {
-                AnsiConsole.Markup("[red]config.json does not exist, please make sure it exists in the folder where you are running the program from[/]");
-                Log.Error("config.json does not exist");
-                Console.ReadKey();
-                Environment.Exit(0);
-            }
-
-            var ffmpegFound = false;
-            var pathAutoDetected = false;
-            if (!string.IsNullOrEmpty(Config!.FFmpegPath) && ValidateFilePath(Config.FFmpegPath))
-            {
-                // FFmpeg path is set in config.json and is valid
-                ffmpegFound = true;
-            }
-            else if (!string.IsNullOrEmpty(Auth!.FFMPEG_PATH) && ValidateFilePath(Auth.FFMPEG_PATH))
-            {
-                // FFmpeg path is set in auth.json and is valid (config.json takes precedence and auth.json is only available for backward compatibility)
-                ffmpegFound = true;
-                Config.FFmpegPath = Auth.FFMPEG_PATH;
-            }
-            else if (string.IsNullOrEmpty(Config.FFmpegPath))
-            {
-                // FFmpeg path is not set in config.json, so we will try to locate it in the PATH or current directory
-                var ffmpegPath = GetFullPath("ffmpeg");
-                if (ffmpegPath != null)
-                {
-                    // FFmpeg is found in the PATH or current directory
-                    ffmpegFound = true;
-                    pathAutoDetected = true;
-                    Config.FFmpegPath = ffmpegPath;
-                }
-                else
-                {
-                    // FFmpeg is not found in the PATH or current directory, so we will try to locate the windows executable
-                    ffmpegPath = GetFullPath("ffmpeg.exe");
-                    if (ffmpegPath != null)
-                    {
-                        // FFmpeg windows executable is found in the PATH or current directory
-                        ffmpegFound = true;
-                        pathAutoDetected = true;
-                        Config.FFmpegPath = ffmpegPath;
-                    }
-                }
-            }
-
-            if (ffmpegFound)
-            {
-                if (pathAutoDetected)
-                {
-                    AnsiConsole.Markup($"[green]FFmpeg located successfully. Path auto-detected: {Config.FFmpegPath}\n[/]");
-                }
-                else
-                {
-                    AnsiConsole.Markup($"[green]FFmpeg located successfully\n[/]");
-                }
-
-                // Escape backslashes in the path for Windows
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && Config.FFmpegPath!.Contains(@":\") && !Config.FFmpegPath.Contains(@":\\"))
-                {
-                    Config.FFmpegPath = Config.FFmpegPath.Replace(@"\", @"\\");
-                }
-            }
-            else
-            {
-                AnsiConsole.Markup("[red]Cannot locate FFmpeg; please modify config.json with the correct path. Press any key to exit.[/]");
-                Log.Error($"Cannot locate FFmpeg with path: {Config.FFmpegPath}");
-                Console.ReadKey();
-                Environment.Exit(0);
-            }
-
-            if (!File.Exists("cdm/devices/chrome_1610/device_client_id_blob"))
-            {
-                clientIdBlobMissing = true;
-            }
-            else
-            {
-                AnsiConsole.Markup($"[green]device_client_id_blob located successfully![/]\n");
-            }
-
-            if (!File.Exists("cdm/devices/chrome_1610/device_private_key"))
-            {
-                devicePrivateKeyMissing = true;
-            }
-            else
-            {
-                AnsiConsole.Markup($"[green]device_private_key located successfully![/]\n");
-            }
-
-            if (clientIdBlobMissing || devicePrivateKeyMissing)
-            {
-                AnsiConsole.Markup("[yellow]device_client_id_blob and/or device_private_key missing, https://cdrm-project.com/ will be used instead for DRM protected videos\n[/]");
-            }
-
-            //Check if auth is valid
-            Entities.User validate = await m_ApiHelper.GetUserInfo($"/users/me", Auth);
-            if (validate.name == null && validate.username == null)
-            {
-                AnsiConsole.Markup($"[red]Auth failed, please check the values in auth.json are correct, press any key to exit[/]");
-                Log.Error("Auth failed");
-                Console.ReadKey();
-                return;
-            }
-
-
-            AnsiConsole.Markup($"[green]Logged In successfully as {validate.name} {validate.username}\n[/]");
-            await DownloadAllData();
+            BuildAvaloniaApp()
+                .StartWithClassicDesktopLifetime(args);
         }
-        catch (Exception ex)
-		{
-			Console.WriteLine("Exception caught: {0}\n\nStackTrace: {1}", ex.Message, ex.StackTrace);
-            Log.Error("Exception caught: {0}\n\nStackTrace: {1}", ex.Message, ex.StackTrace);
-            if (ex.InnerException != null)
-			{
-				Console.WriteLine("\nInner Exception:");
-				Console.WriteLine("Exception caught: {0}\n\nStackTrace: {1}", ex.InnerException.Message, ex.InnerException.StackTrace);
-                Log.Error("Inner Exception: {0}\n\nStackTrace: {1}", ex.InnerException.Message, ex.InnerException.StackTrace);
-            }
-		}
-	}
+        else
+        {
+            await ConsoleApp.Run();
+        }
+    }
+
+    public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<GuiApp>()
+            .UsePlatformDetect()
+            .WithInterFont()
+            .LogToTrace();
+
+    private async static Task ConsoleMain()
+	{
+            await DownloadAllData();
+    }
 
 
     private static async Task DownloadAllData()
@@ -196,32 +71,10 @@ public class Program
         {
             DateTime startTime = DateTime.Now;
             Dictionary<string, int> users = new();
-            Dictionary<string, int> activeSubs = await m_ApiHelper.GetActiveSubscriptions("/subscriptions/subscribes", Auth);
-            foreach (KeyValuePair<string, int> activeSub in activeSubs)
-            {
-                if (!users.ContainsKey(activeSub.Key))
-                {
-                    users.Add(activeSub.Key, activeSub.Value);
-                }
-            }
-            if (Config!.IncludeExpiredSubscriptions)
-            {
-                Dictionary<string, int> expiredSubs = await m_ApiHelper.GetExpiredSubscriptions("/subscriptions/subscribes", Auth);
-                foreach (KeyValuePair<string, int> expiredSub in expiredSubs)
-                {
-                    if (!users.ContainsKey(expiredSub.Key))
-                    {
-                        users.Add(expiredSub.Key, expiredSub.Value);
-                    }
-                }
-            }
-            await m_DBHelper.CreateUsersDB(users);
-            Dictionary<string, int> lists = await m_ApiHelper.GetLists("/lists", Auth);
+
             Dictionary<string, int> selectedUsers = new();
             KeyValuePair<bool, Dictionary<string, int>> hasSelectedUsersKVP =
-                Config.NonInteractiveMode
-                    ? new KeyValuePair<bool, Dictionary<string, int>>(true, users)
-                    : await HandleUserSelection(selectedUsers, users, lists);
+                new KeyValuePair<bool, Dictionary<string, int>>(true, users);
 
             if (hasSelectedUsersKVP.Key && hasSelectedUsersKVP.Value != null && hasSelectedUsersKVP.Value.ContainsKey("SinglePost"))
             {
@@ -1642,24 +1495,5 @@ public class Program
             };
         }
         return progressColumns.ToArray();
-    }
-
-    public static string? GetFullPath(string filename)
-    {
-        if (File.Exists(filename))
-        {
-            return Path.GetFullPath(filename);
-        }
-
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        foreach (var path in pathEnv.Split(Path.PathSeparator))
-        {
-            var fullPath = Path.Combine(path, filename);
-            if (File.Exists(fullPath))
-            {
-                return fullPath;
-            }
-        }
-        return null;
     }
 }

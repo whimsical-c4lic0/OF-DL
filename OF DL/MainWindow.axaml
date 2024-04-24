@@ -1,0 +1,30 @@
+﻿<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:OF_DL.ViewModels"
+        xmlns:avaloniaProgressRing="clr-namespace:AvaloniaProgressRing;assembly=AvaloniaProgressRing"
+        mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+        x:Class="OF_DL.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="MainWindow">
+
+    <StackPanel Orientation="Vertical">
+        <avaloniaProgressRing:ProgressRing Width="80"
+                                           Height="80"
+                                           Name="LoadingRing"
+                                           IsActive="{Binding !SubscriptionsList.Count}"
+                                           HorizontalAlignment="Left"
+                                           VerticalAlignment="Top"
+                                           Foreground="Green"
+                                           Margin="10,24,0,0"/>
+    </StackPanel>
+
+
+
+
+
+
+
+</Window>
+
