@@ -2,17 +2,14 @@ using Avalonia;
 using Newtonsoft.Json;
 using OF_DL.Entities;
 using OF_DL.Entities.Archived;
-using OF_DL.Entities.Highlights;
 using OF_DL.Entities.Messages;
 using OF_DL.Entities.Post;
 using OF_DL.Entities.Purchased;
-using OF_DL.Entities.Stories;
 using OF_DL.Entities.Streams;
 using OF_DL.Enumurations;
 using OF_DL.Helpers;
 using Serilog;
 using Spectre.Console;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using static OF_DL.Entities.Lists.UserList;
@@ -33,7 +30,7 @@ public class Program
 
 
     static Program()
-	{
+    {
         m_ApiHelper = new APIHelper();
         m_DBHelper = new DBHelper();
         m_DownloadHelper = new DownloadHelper();
@@ -71,8 +68,54 @@ public class Program
         {
             DateTime startTime = DateTime.Now;
             Dictionary<string, int> users = new();
+            Dictionary<string, int> activeSubs = await m_ApiHelper.GetActiveSubscriptions("/subscriptions/subscribes", Auth, Config.IncludeRestrictedSubscriptions);
+            foreach (KeyValuePair<string, int> activeSub in activeSubs)
+            {
+                if (!users.ContainsKey(activeSub.Key))
+                {
+                    users.Add(activeSub.Key, activeSub.Value);
+                }
+            }
+            if (Config!.IncludeExpiredSubscriptions)
+            {
+                Dictionary<string, int> expiredSubs = await m_ApiHelper.GetExpiredSubscriptions("/subscriptions/subscribes", Auth, Config.IncludeRestrictedSubscriptions);
+                foreach (KeyValuePair<string, int> expiredSub in expiredSubs)
+                {
+                    if (!users.ContainsKey(expiredSub.Key))
+                    {
+                        users.Add(expiredSub.Key, expiredSub.Value);
+                    }
+                }
+            }
+            await m_DBHelper.CreateUsersDB(users);
+            Dictionary<string, int> lists = await m_ApiHelper.GetLists("/lists", Auth);
 
             Dictionary<string, int> selectedUsers = new();
+            KeyValuePair<bool, Dictionary<string, int>> hasSelectedUsersKVP;
+            if(Config.NonInteractiveMode && Config.NonInteractiveModePurchasedTab)
+            {
+                hasSelectedUsersKVP = new KeyValuePair<bool, Dictionary<string, int>>(true, new Dictionary<string, int> { { "PurchasedTab", 0 } });
+            }
+            else if (Config.NonInteractiveMode && string.IsNullOrEmpty(Config.NonInteractiveModeListName))
+            {
+                hasSelectedUsersKVP = new KeyValuePair<bool, Dictionary<string, int>>(true, users);
+            }
+            else if (Config.NonInteractiveMode && !string.IsNullOrEmpty(Config.NonInteractiveModeListName))
+            {
+                List<string> listUsernames = new();
+                int listId = lists[Config.NonInteractiveModeListName];
+                List<string> usernames = await m_ApiHelper.GetListUsers($"/lists/{listId}/users", Auth);
+                foreach (string user in usernames)
+                {
+                    listUsernames.Add(user);
+                }
+                selectedUsers = users.Where(x => listUsernames.Contains($"{x.Key}")).Distinct().ToDictionary(x => x.Key, x => x.Value);
+                hasSelectedUsersKVP = new KeyValuePair<bool, Dictionary<string, int>>(true, selectedUsers);
+            }
+            else
+            {
+                hasSelectedUsersKVP = await HandleUserSelection(selectedUsers, users, lists);
+            }
             KeyValuePair<bool, Dictionary<string, int>> hasSelectedUsersKVP =
                 new KeyValuePair<bool, Dictionary<string, int>>(true, users);
 
@@ -120,6 +163,77 @@ public class Program
 
                     await DownloadSinglePost(post_id, path, users);
                 }
+            }
+            else if (hasSelectedUsersKVP.Key && hasSelectedUsersKVP.Value != null && hasSelectedUsersKVP.Value.ContainsKey("PurchasedTab"))
+            {
+                Dictionary<string, int> purchasedTabUsers = await m_ApiHelper.GetPurchasedTabUsers("/posts/paid", Auth, Config, users);
+                AnsiConsole.Markup($"[red]Checking folders for Users in Purchased Tab\n[/]");
+                foreach (KeyValuePair<string, int> user in purchasedTabUsers)
+                {
+                    string path = "";
+                    if (!string.IsNullOrEmpty(Config.DownloadPath))
+                    {
+                        path = System.IO.Path.Combine(Config.DownloadPath, user.Key);
+                    }
+                    else
+                    {
+                        path = $"__user_data__/sites/OnlyFans/{user.Key}";
+                    }
+
+                    await m_DBHelper.CheckUsername(user, path);
+
+                    if (!Directory.Exists(path))
+                    {
+                        Directory.CreateDirectory(path);
+                        AnsiConsole.Markup($"[red]Created folder for {user.Key}\n[/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.Markup($"[red]Folder for {user.Key} already created\n[/]");
+                    }
+
+                    Entities.User user_info = await m_ApiHelper.GetUserInfo($"/users/{user.Key}", Auth);
+
+                    await m_DBHelper.CreateDB(path);
+                }
+
+                string p = "";
+                if (!string.IsNullOrEmpty(Config.DownloadPath))
+                {
+                    p = Config.DownloadPath;
+                }
+                else
+                {
+                    p = $"__user_data__/sites/OnlyFans/";
+                }
+                List<PurchasedTabCollection> purchasedTabCollections = await m_ApiHelper.GetPurchasedTab("/posts/paid", p, Auth, Config, users);
+                foreach(PurchasedTabCollection purchasedTabCollection in purchasedTabCollections)
+                {
+                    AnsiConsole.Markup($"[red]\nScraping Data for {purchasedTabCollection.Username}\n[/]");
+                    string path = "";
+                    if (!string.IsNullOrEmpty(Config.DownloadPath))
+                    {
+                        path = System.IO.Path.Combine(Config.DownloadPath, purchasedTabCollection.Username);
+                    }
+                    else
+                    {
+                        path = $"__user_data__/sites/OnlyFans/{purchasedTabCollection.Username}"; // specify the path for the new folder
+                    }
+                    int paidPostCount = 0;
+                    int paidMessagesCount = 0;
+                    paidPostCount = await DownloadPaidPostsPurchasedTab(purchasedTabCollection.PaidPosts, users.FirstOrDefault(u => u.Value == purchasedTabCollection.UserId), paidPostCount, path, users);
+                    paidMessagesCount = await DownloadPaidMessagesPurchasedTab(purchasedTabCollection.PaidMessages, users.FirstOrDefault(u => u.Value == purchasedTabCollection.UserId), paidMessagesCount, path, users);
+
+                    AnsiConsole.Markup("\n");
+                    AnsiConsole.Write(new BreakdownChart()
+                    .FullSize()
+                    .AddItem("Paid Posts", paidPostCount, Color.Red)
+                    .AddItem("Paid Messages", paidMessagesCount, Color.Aqua));
+                    AnsiConsole.Markup("\n");
+                }
+                DateTime endTime = DateTime.Now;
+                TimeSpan totalTime = endTime - startTime;
+                AnsiConsole.Markup($"[green]Scrape Completed in {totalTime.TotalMinutes:0.00} minutes\n[/]");
             }
             else if (hasSelectedUsersKVP.Key && !hasSelectedUsersKVP.Value.ContainsKey("ConfigChanged"))
             {
@@ -983,6 +1097,256 @@ public class Program
         return paidPostCount;
     }
 
+    private static async Task<int> DownloadPaidPostsPurchasedTab(PaidPostCollection purchasedPosts, KeyValuePair<string, int> user, int paidPostCount, string path, Dictionary<string, int> users)
+    {
+        int oldPaidPostCount = 0;
+        int newPaidPostCount = 0;
+        if (purchasedPosts == null || purchasedPosts.PaidPosts.Count <= 0)
+        {
+            AnsiConsole.Markup($"[red]Found 0 Paid Posts\n[/]");
+            return 0;
+        }
+
+        AnsiConsole.Markup($"[red]Found {purchasedPosts.PaidPosts.Count} Paid Posts\n[/]");
+        paidPostCount = purchasedPosts.PaidPosts.Count;
+        long totalSize = 0;
+        if (Config.ShowScrapeSize)
+        {
+            totalSize = await m_DownloadHelper.CalculateTotalFileSize(purchasedPosts.PaidPosts.Values.ToList(), Auth);
+        }
+        else
+        {
+            totalSize = paidPostCount;
+        }
+        await AnsiConsole.Progress()
+        .Columns(GetProgressColumns(Config.ShowScrapeSize))
+        .StartAsync(async ctx =>
+        {
+            // Define tasks
+            var task = ctx.AddTask($"[red]Downloading {purchasedPosts.PaidPosts.Count} Paid Posts[/]", autoStart: false);
+            task.MaxValue = totalSize;
+            task.StartTask();
+            foreach (KeyValuePair<long, string> purchasedPostKVP in purchasedPosts.PaidPosts)
+            {
+                bool isNew;
+                if (purchasedPostKVP.Value.Contains("cdn3.onlyfans.com/dash/files"))
+                {
+                    string[] messageUrlParsed = purchasedPostKVP.Value.Split(',');
+                    string mpdURL = messageUrlParsed[0];
+                    string policy = messageUrlParsed[1];
+                    string signature = messageUrlParsed[2];
+                    string kvp = messageUrlParsed[3];
+                    string mediaId = messageUrlParsed[4];
+                    string postId = messageUrlParsed[5];
+                    string? licenseURL = null;
+                    string? pssh = await m_ApiHelper.GetDRMMPDPSSH(mpdURL, policy, signature, kvp, Auth);
+                    if (pssh == null)
+                    {
+                        continue;
+                    }
+
+                    DateTime lastModified = await m_ApiHelper.GetDRMMPDLastModified(mpdURL, policy, signature, kvp, Auth);
+                    Dictionary<string, string> drmHeaders = await m_ApiHelper.GetDynamicHeaders($"/api2/v2/users/media/{mediaId}/drm/post/{postId}", "?type=widevine", Auth);
+                    string decryptionKey;
+                    if (clientIdBlobMissing || devicePrivateKeyMissing)
+                    {
+                        decryptionKey = await m_ApiHelper.GetDecryptionKey(drmHeaders, $"https://onlyfans.com/api2/v2/users/media/{mediaId}/drm/post/{postId}?type=widevine", pssh, Auth);
+                    }
+                    else
+                    {
+                        decryptionKey = await m_ApiHelper.GetDecryptionKeyNew(drmHeaders, $"https://onlyfans.com/api2/v2/users/media/{mediaId}/drm/post/{postId}?type=widevine", pssh, Auth);
+                    }
+                    Purchased.Medium? mediaInfo = purchasedPosts.PaidPostMedia.FirstOrDefault(m => m.id == purchasedPostKVP.Key);
+                    Purchased.List? postInfo = purchasedPosts.PaidPostObjects.FirstOrDefault(p => p?.media?.Contains(mediaInfo) == true);
+
+                    isNew = await m_DownloadHelper.DownloadPurchasedPostDRMVideo(
+                        user_agent: Auth.USER_AGENT,
+                        policy: policy,
+                        signature: signature,
+                        kvp: kvp,
+                        sess: Auth.COOKIE,
+                        url: mpdURL,
+                        decryptionKey: decryptionKey,
+                        folder: path,
+                        lastModified: lastModified,
+                        media_id: purchasedPostKVP.Key,
+                        task: task,
+                        filenameFormat: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? Config.PaidPostFileNameFormat : string.Empty,
+                        postInfo: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? postInfo : null,
+                        postMedia: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? mediaInfo : null,
+                        fromUser: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? postInfo.fromUser : null,
+                        users: users,
+                        config: Config,
+                        showScrapeSize: Config.ShowScrapeSize);
+                    if (isNew)
+                    {
+                        newPaidPostCount++;
+                    }
+                    else
+                    {
+                        oldPaidPostCount++;
+                    }
+                }
+                else
+                {
+                    Purchased.Medium mediaInfo = purchasedPosts.PaidPostMedia.FirstOrDefault(m => m.id == purchasedPostKVP.Key);
+                    Purchased.List postInfo = purchasedPosts.PaidPostObjects.FirstOrDefault(p => p?.media?.Contains(mediaInfo) == true);
+
+                    isNew = await m_DownloadHelper.DownloadPurchasedPostMedia(
+                        url: purchasedPostKVP.Value,
+                        folder: path,
+                        media_id: purchasedPostKVP.Key,
+                        task: task,
+                        filenameFormat: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? Config.PaidPostFileNameFormat : string.Empty,
+                        messageInfo: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? postInfo : null,
+                        messageMedia: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? mediaInfo : null,
+                        fromUser: !string.IsNullOrEmpty(Config.PaidPostFileNameFormat) ? postInfo.fromUser : null,
+                        users: users,
+                        config: Config,
+                        Config.ShowScrapeSize);
+                    if (isNew)
+                    {
+                        newPaidPostCount++;
+                    }
+                    else
+                    {
+                        oldPaidPostCount++;
+                    }
+                }
+            }
+            task.StopTask();
+        });
+        AnsiConsole.Markup($"[red]Paid Posts Already Downloaded: {oldPaidPostCount} New Paid Posts Downloaded: {newPaidPostCount}[/]\n");
+
+        return paidPostCount;
+    }
+
+    private static async Task<int> DownloadPaidMessagesPurchasedTab(PaidMessageCollection paidMessageCollection, KeyValuePair<string, int> user, int paidMessagesCount, string path, Dictionary<string, int> users)
+    {
+        int oldPaidMessagesCount = 0;
+        int newPaidMessagesCount = 0;
+        if (paidMessageCollection != null && paidMessageCollection.PaidMessages.Count > 0)
+        {
+            AnsiConsole.Markup($"[red]Found {paidMessageCollection.PaidMessages.Count} Paid Messages\n[/]");
+            paidMessagesCount = paidMessageCollection.PaidMessages.Count;
+            long totalSize = 0;
+            if (Config.ShowScrapeSize)
+            {
+                totalSize = await m_DownloadHelper.CalculateTotalFileSize(paidMessageCollection.PaidMessages.Values.ToList(), Auth);
+            }
+            else
+            {
+                totalSize = paidMessagesCount;
+            }
+            await AnsiConsole.Progress()
+            .Columns(GetProgressColumns(Config.ShowScrapeSize))
+            .StartAsync(async ctx =>
+            {
+                // Define tasks
+                var task = ctx.AddTask($"[red]Downloading {paidMessageCollection.PaidMessages.Count} Paid Messages[/]", autoStart: false);
+                task.MaxValue = totalSize;
+                task.StartTask();
+                foreach (KeyValuePair<long, string> paidMessageKVP in paidMessageCollection.PaidMessages)
+                {
+                    bool isNew;
+                    if (paidMessageKVP.Value.Contains("cdn3.onlyfans.com/dash/files"))
+                    {
+                        string[] messageUrlParsed = paidMessageKVP.Value.Split(',');
+                        string mpdURL = messageUrlParsed[0];
+                        string policy = messageUrlParsed[1];
+                        string signature = messageUrlParsed[2];
+                        string kvp = messageUrlParsed[3];
+                        string mediaId = messageUrlParsed[4];
+                        string messageId = messageUrlParsed[5];
+                        string? licenseURL = null;
+                        string? pssh = await m_ApiHelper.GetDRMMPDPSSH(mpdURL, policy, signature, kvp, Auth);
+                        if (pssh != null)
+                        {
+                            DateTime lastModified = await m_ApiHelper.GetDRMMPDLastModified(mpdURL, policy, signature, kvp, Auth);
+                            Dictionary<string, string> drmHeaders = await m_ApiHelper.GetDynamicHeaders($"/api2/v2/users/media/{mediaId}/drm/message/{messageId}", "?type=widevine", Auth);
+                            string decryptionKey;
+                            if (clientIdBlobMissing || devicePrivateKeyMissing)
+                            {
+                                decryptionKey = await m_ApiHelper.GetDecryptionKey(drmHeaders, $"https://onlyfans.com/api2/v2/users/media/{mediaId}/drm/message/{messageId}?type=widevine", pssh, Auth);
+                            }
+                            else
+                            {
+                                decryptionKey = await m_ApiHelper.GetDecryptionKeyNew(drmHeaders, $"https://onlyfans.com/api2/v2/users/media/{mediaId}/drm/message/{messageId}?type=widevine", pssh, Auth);
+                            }
+
+
+                            Purchased.Medium? mediaInfo = paidMessageCollection.PaidMessageMedia.FirstOrDefault(m => m.id == paidMessageKVP.Key);
+                            Purchased.List? messageInfo = paidMessageCollection.PaidMessageObjects.FirstOrDefault(p => p?.media?.Contains(mediaInfo) == true);
+
+                            isNew = await m_DownloadHelper.DownloadPurchasedMessageDRMVideo(
+                                user_agent: Auth.USER_AGENT,
+                                policy: policy,
+                                signature: signature,
+                                kvp: kvp,
+                                sess: Auth.COOKIE,
+                                url: mpdURL,
+                                decryptionKey: decryptionKey,
+                                folder: path,
+                                lastModified: lastModified,
+                                media_id: paidMessageKVP.Key,
+                                task: task,
+                                filenameFormat: !string.IsNullOrEmpty(Config.PaidMessageFileNameFormat) ? Config.PaidMessageFileNameFormat : string.Empty,
+                                messageInfo: messageInfo,
+                                messageMedia: mediaInfo,
+                                fromUser: messageInfo.fromUser,
+                                users: users,
+                                config: Config,
+                                showScrapeSize: Config.ShowScrapeSize);
+
+                            if (isNew)
+                            {
+                                newPaidMessagesCount++;
+                            }
+                            else
+                            {
+                                oldPaidMessagesCount++;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Purchased.Medium? mediaInfo = paidMessageCollection.PaidMessageMedia.FirstOrDefault(m => m.id == paidMessageKVP.Key);
+                        Purchased.List messageInfo = paidMessageCollection.PaidMessageObjects.FirstOrDefault(p => p?.media?.Contains(mediaInfo) == true);
+
+                        isNew = await m_DownloadHelper.DownloadPurchasedMedia(
+                            url: paidMessageKVP.Value,
+                            folder: path,
+                            media_id: paidMessageKVP.Key,
+                            task: task,
+                            filenameFormat: !string.IsNullOrEmpty(Config.PaidMessageFileNameFormat) ? Config.PaidMessageFileNameFormat : string.Empty,
+                            messageInfo: messageInfo,
+                            messageMedia: mediaInfo,
+                            fromUser: messageInfo.fromUser,
+                            users: users,
+                            config: Config,
+                            Config.ShowScrapeSize);
+                        if (isNew)
+                        {
+                            newPaidMessagesCount++;
+                        }
+                        else
+                        {
+                            oldPaidMessagesCount++;
+                        }
+                    }
+                }
+                task.StopTask();
+            });
+            AnsiConsole.Markup($"[red]Paid Messages Already Downloaded: {oldPaidMessagesCount} New Paid Messages Downloaded: {newPaidMessagesCount}[/]\n");
+        }
+        else
+        {
+            AnsiConsole.Markup($"[red]Found 0 Paid Messages\n[/]");
+        }
+
+        return paidMessagesCount;
+    }
+
     private static async Task<int> DownloadStreams(KeyValuePair<bool, Dictionary<string, int>> hasSelectedUsersKVP, KeyValuePair<string, int> user, int streamsCount, string path)
     {
         AnsiConsole.Markup($"[red]Getting Streams\n[/]");
@@ -1120,7 +1484,7 @@ public class Program
         AnsiConsole.Markup($"[red]Getting Post\n[/]");
         SinglePostCollection post = await m_ApiHelper.GetPost($"/posts/{post_id.ToString()}", path, Auth!, Config!);
 
-        if(post == null)
+        if (post == null)
         {
             AnsiConsole.Markup($"[red]Couldn't find post\n[/]");
             return;
@@ -1316,11 +1680,13 @@ public class Program
                     break;
                 case "[red]Download Single Post[/]":
                     return new KeyValuePair<bool, Dictionary<string, int>>(true, new Dictionary<string, int> { { "SinglePost", 0 } });
+                case "[red]Download Purchased Tab[/]":
+                    return new KeyValuePair<bool, Dictionary<string, int>>(true, new Dictionary<string, int> { { "PurchasedTab", 0 } });
                 case "[red]Edit config.json[/]":
                     while (true)
                     {
                         var choices = new List<(string choice, bool isSelected)>();
-                        choices.AddRange(new []
+                        choices.AddRange(new[]
                         {
                             ( "[red]Go Back[/]", false ),
                             ( "[red]DownloadAvatarHeaderPhoto[/]", Config.DownloadAvatarHeaderPhoto),
@@ -1336,6 +1702,7 @@ public class Program
                             ( "[red]DownloadVideos[/]", Config.DownloadVideos ),
                             ( "[red]DownloadAudios[/]", Config.DownloadAudios ),
                             ( "[red]IncludeExpiredSubscriptions[/]", Config.IncludeExpiredSubscriptions ),
+                            ( "[red]IncludeRestrictedSubscriptions[/]", Config.IncludeRestrictedSubscriptions ),
                             ( "[red]SkipAds[/]", Config.SkipAds ),
                             ( "[red]FolderPerPaidPost[/]", Config.FolderPerPaidPost ),
                             ( "[red]FolderPerPost[/]", Config.FolderPerPost ),
@@ -1346,21 +1713,22 @@ public class Program
                             ( "[red]DownloadPostsBeforeOrAfterSpecificDate[/]", Config.DownloadOnlySpecificDates ),
                             ( "[red]ShowScrapeSize[/]", Config.ShowScrapeSize),
                             ( "[red]DownloadPostsIncrementally[/]", Config.DownloadPostsIncrementally),
-                            ( "[red]NonInteractiveMode[/]", Config.NonInteractiveMode)
+                            ( "[red]NonInteractiveMode[/]", Config.NonInteractiveMode),
+                            ( "[red]NonInteractiveModePurchasedTab[/]", Config.NonInteractiveModePurchasedTab)
                         });
 
                         MultiSelectionPrompt<string> multiSelectionPrompt = new MultiSelectionPrompt<string>()
                             .Title("[red]Edit config.json[/]")
-                            .PageSize(24);
+                            .PageSize(25);
 
-                        foreach(var choice in choices)
+                        foreach (var choice in choices)
                         {
                             multiSelectionPrompt.AddChoices(choice.choice, (selectionItem) => { if (choice.isSelected) selectionItem.Select(); });
                         }
 
                         var configOptions = AnsiConsole.Prompt(multiSelectionPrompt);
 
-                        if(configOptions.Contains("[red]Go Back[/]"))
+                        if (configOptions.Contains("[red]Go Back[/]"))
                         {
                             break;
                         }
@@ -1377,6 +1745,7 @@ public class Program
                             CustomDate = Config.CustomDate,
                             Timeout = Config.Timeout,
                             FFmpegPath = Config.FFmpegPath,
+                            NonInteractiveModeListName = Config.NonInteractiveModeListName,
                             DownloadAvatarHeaderPhoto = configOptions.Contains("[red]DownloadAvatarHeaderPhoto[/]"),
                             DownloadPaidPosts = configOptions.Contains("[red]DownloadPaidPosts[/]"),
                             DownloadPosts = configOptions.Contains("[red]DownloadPosts[/]"),
@@ -1390,6 +1759,7 @@ public class Program
                             DownloadVideos = configOptions.Contains("[red]DownloadVideos[/]"),
                             DownloadAudios = configOptions.Contains("[red]DownloadAudios[/]"),
                             IncludeExpiredSubscriptions = configOptions.Contains("[red]IncludeExpiredSubscriptions[/]"),
+                            IncludeRestrictedSubscriptions = configOptions.Contains("[red]IncludeRestrictedSubscriptions[/]"),
                             SkipAds = configOptions.Contains("[red]SkipAds[/]"),
                             FolderPerPaidPost = configOptions.Contains("[red]FolderPerPaidPost[/]"),
                             FolderPerPost = configOptions.Contains("[red]FolderPerPost[/]"),
@@ -1400,7 +1770,8 @@ public class Program
                             DownloadOnlySpecificDates = configOptions.Contains("[red]DownloadPostsBeforeOrAfterSpecificDate[/]"),
                             ShowScrapeSize = configOptions.Contains("[red]ShowScrapeSize[/]"),
                             DownloadPostsIncrementally = configOptions.Contains("[red]DownloadPostsIncrementally[/]"),
-                            NonInteractiveMode = configOptions.Contains("[red]NonInteractiveMode[/]")
+                            NonInteractiveMode = configOptions.Contains("[red]NonInteractiveMode[/]"),
+                            NonInteractiveModePurchasedTab = configOptions.Contains("[red]NonInteractiveModePurchasedTab[/]")
                         };
 
 
@@ -1429,25 +1800,27 @@ public class Program
         if (lists.Count > 0)
         {
             return new List<string>
-			{
-				"[red]Select All[/]",
-				"[red]List[/]",
-				"[red]Custom[/]",
+            {
+                "[red]Select All[/]",
+                "[red]List[/]",
+                "[red]Custom[/]",
                 "[red]Download Single Post[/]",
+                "[red]Download Purchased Tab[/]",
                 "[red]Edit config.json[/]",
-				"[red]Exit[/]"
-			};
+                "[red]Exit[/]"
+            };
         }
         else
         {
             return new List<string>
-			{
-				"[red]Select All[/]",
-				"[red]Custom[/]",
+            {
+                "[red]Select All[/]",
+                "[red]Custom[/]",
                 "[red]Download Single Post[/]",
+                "[red]Download Purchased Tab[/]",
                 "[red]Edit config.json[/]",
                 "[red]Exit[/]"
-			};
+            };
         }
     }
 
