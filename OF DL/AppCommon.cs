@@ -1,6 +1,7 @@
 ﻿using System.Runtime.InteropServices;
 using Newtonsoft.Json;
 using OF_DL.Entities;
+using OF_DL.Exceptions;
 using OF_DL.Helpers;
 using Serilog;
 
@@ -27,7 +28,7 @@ public class AppCommon
             .WriteTo.Console()
             .CreateLogger();
 
-        VerifyOSCompatibility();
+        VerifyOperatingSystemCompatibility();
         _auth = GetAuth();
         _config = GetConfig();
         _useCdrmProject = !DetectDrmKeysPresence();
@@ -38,14 +39,22 @@ public class AppCommon
         _downloadHelper = new DownloadHelper();
     }
 
-    private static void VerifyOSCompatibility()
+    private static void VerifyOperatingSystemCompatibility()
     {
         var os = Environment.OSVersion;
-        if (os.Platform == PlatformID.Win32NT && os.Version.Major < 10)
-        {
-            Log.Error("Windows version prior to 10.x: {0}", os.VersionString);
-            throw new Exception("Windows version prior to 10.x");
-        }
+        if (os.Platform != PlatformID.Win32NT || os.Version.Major >= 10) return;
+
+        var platform =
+            os.Platform switch
+            {
+                PlatformID.Win32NT => "Windows",
+                PlatformID.Unix => "Unix",
+                PlatformID.MacOSX => "macOS",
+                _ => "Unknown"
+            };
+
+        Log.Error($"Unsupported operating system: {platform} version {os.VersionString}");
+        throw new UnsupportedOperatingSystem(platform, os.VersionString);
     }
 
     private static Auth GetAuth()
@@ -58,17 +67,13 @@ public class AppCommon
             {
                 return authJson;
             }
-            else
-            {
-                Log.Error("auth.json is invalid");
-                throw new Exception("auth.json is invalid");
-            }
+
+            Log.Error("auth.json is invalid");
+            throw new MalformedFileException("auth.json");
         }
-        else
-        {
-            Log.Error("auth.json does not exist");
-            throw new Exception("auth.json does not exist");
-        }
+
+        Log.Error("auth.json does not exist");
+        throw new MissingFileException("auth.json");
     }
 
     private static Config GetConfig()
@@ -81,17 +86,13 @@ public class AppCommon
             {
                 return configJson;
             }
-            else
-            {
-                Log.Error("config.json is invalid");
-                throw new Exception("config.json is invalid");
-            }
+
+            Log.Error("config.json is invalid");
+            throw new MalformedFileException("config.json");
         }
-        else
-        {
-            Log.Error("config.json does not exist");
-            throw new Exception("config.json does not exist");
-        }
+
+        Log.Error("config.json does not exist");
+        throw new MissingFileException("config.json");
     }
 
     private void LoadFfmpeg()
@@ -227,14 +228,14 @@ public class AppCommon
     {
         var user = await _apiHelper.GetUserInfo("/users/me", _auth);
 
-        if (user is { id: not null })
+        if (user is not { id: not null })
         {
-            Log.Debug($"Logged in successfully as {user.name} {user.username}");
-            return user;
+            Log.Error("Authentication failed. Please check your credentials in auth.json");
+            throw new AuthenticationFailureException();
         }
 
-        Log.Error("Auth failed, please check the values in auth.json are correct");
-        throw new Exception("Failed to get user info");
+        Log.Debug($"Logged in successfully as {user.name} {user.username}");
+        return user;
     }
 
     private async Task<Dictionary<string, int>> GetActiveSubscriptions()
