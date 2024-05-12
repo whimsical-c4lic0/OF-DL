@@ -116,8 +116,6 @@ public class Program
             {
                 hasSelectedUsersKVP = await HandleUserSelection(selectedUsers, users, lists);
             }
-            KeyValuePair<bool, Dictionary<string, int>> hasSelectedUsersKVP =
-                new KeyValuePair<bool, Dictionary<string, int>>(true, users);
 
             if (hasSelectedUsersKVP.Key && hasSelectedUsersKVP.Value != null && hasSelectedUsersKVP.Value.ContainsKey("SinglePost"))
             {

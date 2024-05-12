@@ -27,6 +27,7 @@ public class AppCommon
             .WriteTo.Console()
             .CreateLogger();
 
+        VerifyOSCompatibility();
         _auth = GetAuth();
         _config = GetConfig();
         _useCdrmProject = !DetectDrmKeysPresence();
@@ -35,6 +36,16 @@ public class AppCommon
         _apiHelper = new APIHelper();
         _dbHelper = new DBHelper();
         _downloadHelper = new DownloadHelper();
+    }
+
+    private static void VerifyOSCompatibility()
+    {
+        var os = Environment.OSVersion;
+        if (os.Platform == PlatformID.Win32NT && os.Version.Major < 10)
+        {
+            Log.Error("Windows version prior to 10.x: {0}", os.VersionString);
+            throw new Exception("Windows version prior to 10.x");
+        }
     }
 
     private static Auth GetAuth()
@@ -233,7 +244,7 @@ public class AppCommon
             return _activeSubscriptions;
         }
 
-        _activeSubscriptions = await _apiHelper.GetActiveSubscriptions("/subscriptions/subscribes", _auth);
+        _activeSubscriptions = await _apiHelper.GetActiveSubscriptions("/subscriptions/subscribes", _auth, _config.IncludeRestrictedSubscriptions);
         return _activeSubscriptions;
     }
 
@@ -244,7 +255,7 @@ public class AppCommon
             return _expiredSubscriptions;
         }
 
-        _expiredSubscriptions = await _apiHelper.GetExpiredSubscriptions("/subscriptions/subscribes", _auth);
+        _expiredSubscriptions = await _apiHelper.GetExpiredSubscriptions("/subscriptions/subscribes", _auth, _config.IncludeRestrictedSubscriptions);
         return _expiredSubscriptions;
     }
 
