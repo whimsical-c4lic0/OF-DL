@@ -11,14 +11,19 @@
         Title="OF-DL">
 
     <Grid ColumnDefinitions="*, *">
-        <Border Grid.Column="0" Grid.ColumnSpan="2" VerticalAlignment="Center" HorizontalAlignment="Center" Background="Black" ZIndex="2" Padding="0" IsVisible="{Binding IsLoading}">
-            <avaloniaProgressRing:ProgressRing Width="80"
-                                               Height="80"
-                                               Name="LoadingRing"
-                                               IsActive="{Binding IsLoading}"
-                                               Foreground="Green"
-                                               ZIndex="3"
-                                               Margin="10,24,0,0"/>
+        <Border Grid.Column="0" Grid.ColumnSpan="2" VerticalAlignment="Stretch" HorizontalAlignment="Stretch" Background="White" ZIndex="2" Padding="0" IsVisible="{Binding IsLoading}">
+            <StackPanel Orientation="Vertical" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <avaloniaProgressRing:ProgressRing Width="80"
+                                                   Height="80"
+                                                   Name="LoadingRing"
+                                                   IsActive="{Binding IsLoading}"
+                                                   Foreground="Green"
+                                                   ZIndex="3"
+                                                   Margin="10,24,0,32"/>
+                <Label FontSize="32" IsVisible="{Binding IsLoadingAccount}">Loading account</Label>
+                <Label FontSize="32" IsVisible="{Binding IsLoadingSubscriptions}">Loading subscriptions</Label>
+            </StackPanel>
+
         </Border>
 
         <StackPanel Grid.Column="0" Orientation="Vertical">
