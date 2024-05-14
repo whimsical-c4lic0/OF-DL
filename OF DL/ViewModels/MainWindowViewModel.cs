@@ -13,8 +13,7 @@ public partial class MainWindowViewModel : ObservableObject
     #region Public Properties
 
     [ObservableProperty] private bool _isLoading = true;
-    [ObservableProperty] private bool _isLoadingAccount = true;
-    [ObservableProperty] private bool _isLoadingSubscriptions = false;
+    [ObservableProperty] private string _loadingText = "";
     [ObservableProperty] private bool _hasSubscriptionsLoaded = false;
     [ObservableProperty] private bool _hasAuthenticationFailed = false;
 
@@ -72,11 +71,11 @@ public partial class MainWindowViewModel : ObservableObject
 
         try
         {
+            LoadingText = "Getting account";
             await _appCommon.GetUser();
-            await _appCommon.CreateOrUpdateUsersDatabase();
-            IsLoadingAccount = false;
 
-            IsLoadingSubscriptions = true;
+            LoadingText = "Getting subscriptions";
+            await _appCommon.CreateOrUpdateUsersDatabase();
             var subscriptions = await _appCommon.GetSubscriptions();
 
             Log.Information($"Found {subscriptions.Count} subscriptions");
@@ -88,7 +87,6 @@ public partial class MainWindowViewModel : ObservableObject
             }
 
             SubscriptionsList = subscriptionsList;
-            IsLoadingSubscriptions = false;
             HasSubscriptionsLoaded = true;
         }
         catch (UnsupportedOperatingSystem ex)

@@ -20,10 +20,8 @@
                                                    Foreground="Green"
                                                    ZIndex="3"
                                                    Margin="10,24,0,32"/>
-                <Label FontSize="32" IsVisible="{Binding IsLoadingAccount}">Loading account</Label>
-                <Label FontSize="32" IsVisible="{Binding IsLoadingSubscriptions}">Loading subscriptions</Label>
+                <Label FontSize="32" Content="{Binding LoadingText}" />
             </StackPanel>
-
         </Border>
 
         <StackPanel Grid.Column="0" Orientation="Vertical">
